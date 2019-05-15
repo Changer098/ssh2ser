@@ -1,0 +1,2 @@
+# Cisco Serial
+uses 'LF' EOL mode
