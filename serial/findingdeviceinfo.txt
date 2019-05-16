@@ -1,0 +1,14 @@
+device_path = os.path.realpath('/sys/class/tty/{}/device'.format(self.name))
+subsystem = os.path.basename(os.path.realpath(os.path.join(self.device_path, 'subsystem')))
+if 'usb-serial' in subsystem:
+	usb_interface_path = os.path.dirname(device_path)
+elif 'usb' in subsystem:
+	usb_interface_path = device_path
+usb_device_path = os.path.dirname(usb_interface_path)
+num_interfaces = read(usb_device_path + 'bNumInterfaces')
+vid = read(usb_device_path + 'idVendor')
+pid = read(usb_device_path + 'idProduct')
+serial = read(usb_device_path + 'serial')
+manufacturer = read(usb_device_path + 'manufacturer')
+product = read(usb_device_path + 'product')
+interface = read(usb_device_path + 'interface')

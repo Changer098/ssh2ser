@@ -1,14 +1,12 @@
-import base64
 from binascii import hexlify
-import os
 import socket
 import sys
 import threading
 import traceback
-import xterm
+import server
 
 import paramiko
-from paramiko.py3compat import b, u, decodebytes
+from paramiko.py3compat import u, decodebytes
 
 
 class PServer(paramiko.ServerInterface):
@@ -71,7 +69,7 @@ class PServer(paramiko.ServerInterface):
         termString = bytes.decode(term, "ascii")
         if "xterm" in termString:
             self.usePty = True
-            self.pty = xterm.Xterm(channel, term, width, height, pixelwidth, pixelheight, modes)
+            self.pty = server.Xterm(channel, term, width, height, pixelwidth, pixelheight, modes)
             return True
         else:
             print("Can only emulate xterm ptys")
@@ -84,7 +82,9 @@ class PServer(paramiko.ServerInterface):
         return True
 
     def get_banner(self):
-        return "TEST LOGIN BANNER\r\n", "en-US"
+        if server.ServerInfo.banner is None:
+            return "", "en-US"
+        return server.ServerInfo.banner.join("\r\n"), "en-US"
 
 
 class Server:
@@ -157,7 +157,8 @@ class Server:
             if not pserver.event.is_set():
                 print("*** Client never asked for a shell.")
                 return
-            self.test_interface(chan, pserver.pty)
+            # self.test_interface(chan, pserver.pty)
+            server.mainmenu(pserver.pty)
         except Exception as e:
             print("*** Caught exception: " + str(e.__class__) + ": " + str(e))
             traceback.print_exc()
@@ -165,47 +166,4 @@ class Server:
                 t.close()
             except:
                 pass
-
-    def test_interface(self, channel, pty):
-        # channel.send("\r\nEcho Server\r\n")
-        pty.newline()
-        pty.sendLine("Echo Server")
-        kill = False
-        while not kill:
-            rawKey = pty.readKey()
-            key = int.from_bytes(rawKey, 'big')
-            if key == 3:
-                kill = True
-            elif key == 13:
-                pty.newline()
-            elif key == 127:
-                # pty.send('\b')
-                # pty.send(' ')
-                # pty.send('\b')
-                pty.backspace()
-            elif key == 27:
-                keys = [27]
-                key = int.from_bytes(pty.readKey(), 'big')
-                keys.append(key)
-                if key == 91:
-                    key = int.from_bytes(pty.readKey(), 'big')
-                    keys.append(key)
-                    if key == 65:
-                        print("UP")
-                    elif key == 66:
-                        print("DOWN")
-                    elif key == 67:
-                        # print("RIGHT")
-                        pty.right()
-                    elif key == 68:
-                        # print("LEFT")
-                        pty.left()
-                    else:
-                        pty.send("".join(chr(key) for key in keys))
-                else:
-                    pty.send("".join(chr(key) for key in keys))
-            # up: [27, 91, 65], down: [27, 91. 66], left: [27, 91, 68], right: [27, 91, 67]
-            else:
-                pty.send(rawKey)
-        channel.close()
 
