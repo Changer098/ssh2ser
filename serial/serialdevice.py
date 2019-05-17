@@ -59,6 +59,9 @@ class SerialDevice:
             traceback.print_exc()
             return None
 
+    def __str__(self):
+        return self.device_info.get_prod_name()
+
 
 class DeviceInfo:
     manufacturer = None

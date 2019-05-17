@@ -1,24 +1,24 @@
 # A whole lotta help http://www.lihaoyi.com/post/BuildyourownCommandLinewithANSIescapecodes.html
 
-from server import pty
+import server
 
 
-class Xterm(pty.BasePty):
+class Xterm(server.pty.BasePty):
     cursorPositionX = 0
     cursorPositionY = 0
     file = None
     currentLine = 0
     lines = []
-    file = None
     lockedX = False
     lockedY = False
-    keys = None
+    reader = None
+    editableX = 0       # Allow cursor movement in editable zone
+    editableLocked = False
 
     def __init__(self, channel, term, width, height, pixelwidth, pixelheight, modes):
         super().__init__(channel, term, width, height, pixelwidth, pixelheight, modes)
         self.lines.append("")
-        self.file = self.channel.makefile("rwU")
-        self.keys = pty.KeyHistory()
+        self.reader = server.pty.KeyReader(self.channel.makefile("r"))
 
     def cleanup(self):
         self.currentLine = 0
@@ -27,7 +27,9 @@ class Xterm(pty.BasePty):
         self.lockedX = False
         self.cursorPositionX = 0
         self.cursorPositionY = 0
-        file = None
+        self.reader = None
+        self.editableX = 0
+        self.editableLocked = False
 
     def resize(self, width, height, pixelwidth, pixelheight):
         pass
@@ -35,6 +37,8 @@ class Xterm(pty.BasePty):
     def send(self, value):
         if isinstance(value, bytes):
             value = bytes.decode(value, "ascii")
+        if isinstance(value, server.Key):
+            value = value.c()
         # if currentline is empty, overwrite line
         # else add value to current line based on cursor position
         if len(self.lines[self.currentLine]) == 0:
@@ -47,7 +51,7 @@ class Xterm(pty.BasePty):
                 # far left
                 new_line = self.lines[self.currentLine]
                 new_line = value + new_line
-                self.lines[self.currentLine] + value
+                self.lines[self.currentLine] = value
                 # self.cursorPositionX = self.cursorPositionX + 1
                 # move cursor left
                 # self.channel.send("\u001b[{}G".format(self.cursorPositionX + 1))
@@ -81,6 +85,11 @@ class Xterm(pty.BasePty):
     def left(self):
         if self.lockedX:
             self.bell()
+        elif self.editableLocked:
+            if self.cursorPositionX <= self.editableX:
+                self.bell()
+            else:
+                self.update_cursor(newX=self.cursorPositionX - 1)
         elif self.cursorPositionX != 0:
             # move cursor left by one
             # self.channel.send("\u001b[1D")
@@ -131,6 +140,10 @@ class Xterm(pty.BasePty):
         if len(self.lines[self.currentLine]) == 0 or self.cursorPositionX == 0:
             self.bell()
         else:
+            if self.editableX:
+                if self.cursorPositionX <= self.editableX:
+                    self.bell()
+                    return
             if self.cursorPositionX == len(self.lines[self.currentLine]):
                 # right
                 new_line = self.lines[self.currentLine][0:len(self.lines[self.currentLine]) - 1]
@@ -154,10 +167,12 @@ class Xterm(pty.BasePty):
     def clear_line(self):
         self.channel.send("\u001b[2K")
         self.channel.send("\u001b[0G")
+        self.lines[self.currentLine] = ""
 
     def read_key(self):
-        raw_key = self.file.read(1)
-        return raw_key, int.from_bytes(raw_key, 'big')
+        # raw_key = self.file.read(1)
+        # return raw_key, int.from_bytes(raw_key, 'big')
+        return self.reader.consume()
 
     def lock(self, x=False, y=False):
         if x:
@@ -189,13 +204,85 @@ class Xterm(pty.BasePty):
         self.cleanup()
         self.channel.close()
 
-    # Input matching
+    # Matching keys
     def arrow(self, key):
         if key == 27:
             # peek key
             # if key == 91
             # peek key
             # if key is in [65,66,67,68] consume all three keys
-            pass
+            if self.reader.peek() == 91:
+                peeked = self.reader.peek()
+                if peeked == 65:
+                    self.reader.consume(count=2)
+                    self.up()
+                    return True
+                elif peeked == 66:
+                    self.reader.consume(count=2)
+                    self.down()
+                    return True
+                elif peeked == 67:
+                    self.reader.consume(count=2)
+                    self.right()
+                    return True
+                elif peeked == 68:
+                    self.reader.consume(count=2)
+                    self.left()
+                    return True
+                else:
+                    return False
         else:
             return False
+
+    def ctrlc(self, key):
+        return key == 3
+
+    def enter(self, key, is_input=False):
+        if self.editableLocked and not is_input:
+            # ignore enter so that inputKey can grab it
+            return False
+        return key == 13
+
+    def back(self, key):
+        return key == 127
+
+    def match(self, key, code):
+        return key == code
+
+    # Input
+    def input(self, prompt):
+        self.lock(y=True)
+        self.editableLocked = True
+        self.send(prompt)
+        self.editableX = len(prompt)
+
+    def input_key(self, key, only_numbers=False):
+        if self.enter(key, is_input=True):
+            # get inputted value and return it
+            return self.lines[self.currentLine][self.editableX:]
+        else:
+            # apply modifiers
+            if only_numbers:
+                if server.RE_CharIsNum.match(key.c()) is not None:
+                    self.send(key)
+                # only send if key matches modifier
+            else:
+                self.send(key)
+            return None
+
+    def input_fail(self, error_msg):
+        # copy current line minus invalid input
+        line_copy = self.lines[self.currentLine][0:self.editableX]
+        self.clear_line()
+        self.send_line(error_msg)
+        self.send(line_copy)
+
+    def input_success(self, no_newline=False):
+        self.lock(y=False)
+        self.editableLocked = False
+        self.editableX = 0
+        if not no_newline:
+            self.newline()
+
+    def button(self, message):
+        return "\u001b[7m[{}]\u001b[0m".format(message)

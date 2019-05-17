@@ -159,6 +159,7 @@ class Server:
                 return
             # self.test_interface(chan, pserver.pty)
             server.mainmenu(pserver.pty)
+            pserver.pty.close()
         except Exception as e:
             print("*** Caught exception: " + str(e.__class__) + ": " + str(e))
             traceback.print_exc()
